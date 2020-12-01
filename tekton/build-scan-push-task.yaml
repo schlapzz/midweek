@@ -1,0 +1,133 @@
+apiVersion: tekton.dev/v1beta1
+kind: Task
+metadata:
+  annotations:
+    tekton.dev/pipelines.minVersion: 0.17.0
+    tekton.dev/tags: image-build
+  selfLink: >-
+    /apis/tekton.dev/v1beta1/namespaces/pitc-cschlatter-midweek/tasks/buildah-trivy-scan
+  name: buildah-trivy-scan
+  namespace: pitc-cschlatter-midweek
+  labels:
+    app.kubernetes.io/version: '0.2'
+spec:
+  description: >-
+    Buildah task builds source into a container image and then pushes it to a
+    container registry.
+
+    Buildah Task builds source into a container image using Project Atomic's
+    Buildah build tool.It uses Buildah's support for building from Dockerfiles,
+    using its buildah bud command.This command executes the directives in the
+    Dockerfile to assemble a container image, then pushes that image to a
+    container registry.
+  params:
+    - description: Reference of the image buildah will produce.
+      name: IMAGE
+      type: string
+    - default: 'quay.io/buildah/stable:v1.15.1'
+      description: The location of the buildah builder image.
+      name: BUILDER_IMAGE
+      type: string
+    - default: overlay
+      description: Set buildah storage driver
+      name: STORAGE_DRIVER
+      type: string
+    - default: ./Dockerfile
+      description: Path to the Dockerfile to build.
+      name: DOCKERFILE
+      type: string
+    - default: .
+      description: Path to the directory to use as context.
+      name: CONTEXT
+      type: string
+    - default: 'true'
+      description: >-
+        Verify the TLS on the registry endpoint (for push/pull to a non-TLS
+        registry)
+      name: TLSVERIFY
+      type: string
+    - default: oci
+      description: 'The format of the built container, oci or docker'
+      name: FORMAT
+      type: string
+    - default: ''
+      description: Extra parameters passed for the build command when building images.
+      name: BUILD_EXTRA_ARGS
+      type: string
+    - default: ''
+      description: Extra parameters passed for the push command when pushing images.
+      name: PUSH_EXTRA_ARGS
+      type: string
+    - default: '1'
+      description: 'Fail pipeline when security check is failing. (1 = fail, 0 = pass)'
+      name: FAIL_ON_SCAN
+      type: string
+  results:
+    - description: Digest of the image just built.
+      name: IMAGE_DIGEST
+  steps:
+    - image: $(params.BUILDER_IMAGE)
+      name: build
+      resources: {}
+      script: |
+        buildah --storage-driver=$(params.STORAGE_DRIVER) bud \
+          $(params.BUILD_EXTRA_ARGS) --format=$(params.FORMAT) \
+          --tls-verify=$(params.TLSVERIFY) --no-cache \
+          -f $(params.DOCKERFILE) -t $(params.IMAGE) $(params.CONTEXT) && buildah images && mkdir -p /var/lib/containers/$(params.IMAGE) && buildah push $(params.IMAGE) oci:/var/lib/containers/test && ls -lah /var/lib/containers/test 
+      securityContext:
+        privileged: true
+      volumeMounts:
+        - mountPath: /var/lib/containers
+          name: varlibcontainers
+      workingDir: $(workspaces.source.path)
+    - args:
+        - image
+        - '--exit-code'
+        - $(params.FAIL_ON_SCAN)
+        - '--input'
+        - /var/lib/containers/test
+      command:
+        - trivy
+      image: aquasec/trivy
+      name: image-scan
+      resources: {}
+      securityContext:
+        privileged: true
+      volumeMounts:
+        - mountPath: /root/.cache/
+          name: trivy-cache
+        - mountPath: /var/run/docker.sock
+          name: docker-socket
+        - mountPath: /var/lib/containers
+          name: varlibcontainers
+    - image: $(params.BUILDER_IMAGE)
+      name: push
+      resources: {}
+      script: |
+        buildah --storage-driver=$(params.STORAGE_DRIVER) push \
+          $(params.PUSH_EXTRA_ARGS) --tls-verify=$(params.TLSVERIFY) \
+          --digestfile $(workspaces.source.path)/image-digest $(params.IMAGE) \
+          docker://$(params.IMAGE)
+      securityContext:
+        privileged: true
+      volumeMounts:
+        - mountPath: /var/lib/containers
+          name: varlibcontainers
+      workingDir: $(workspaces.source.path)
+    - image: $(params.BUILDER_IMAGE)
+      name: digest-to-results
+      resources: {}
+      script: >-
+        cat $(workspaces.source.path)/image-digest | tee
+        /tekton/results/IMAGE_DIGEST
+  volumes:
+    - emptyDir: {}
+      name: varlibcontainers
+    - emptyDir: {}
+      name: trivy-cache
+    - hostPath:
+        path: /var/run/crio/crio.sock
+        type: Socket
+      name: docker-socket
+  workspaces:
+    - name: source
