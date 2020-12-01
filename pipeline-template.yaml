@@ -1,0 +1,72 @@
+apiVersion: v1
+kind: Template
+metadata:
+  name: trivy-pipeline-template
+  annotations:
+    description: "Tekton Pipeline for buildah and trivy task"
+    tags: "tekton,trivy,buildah"
+parameters:
+  - name: PIPELINE_NAME
+    description: "pipeline name"
+    required: true
+  - name: GIT_REPOSITORY
+    description: "url to git repo"
+    required: true
+  - name: IMAGE_NAME
+    description: "name of the final image"
+    required: true
+objects:
+- apiVersion: tekton.dev/v1beta1
+  kind: Pipeline
+  metadata:
+    name: ${PIPELINE_NAME}
+    namespace: pitc-cschlatter-midweek
+  spec:
+    tasks:
+      - name: git-clone
+        params:
+          - name: url
+            value: ${GIT_REPOSITORY}
+          - name: revision
+            value: master
+          - name: submodules
+            value: 'true'
+          - name: depth
+            value: '1'
+          - name: sslVerify
+            value: 'true'
+          - name: deleteExisting
+            value: 'true'
+        taskRef:
+          kind: ClusterTask
+          name: git-clone
+        workspaces:
+          - name: output
+            workspace: shared-data
+      - name: buildah-trivy-scan
+        params:
+          - name: IMAGE
+            value: ${IMAGE_NAME}
+          - name: BUILDER_IMAGE
+            value: 'quay.io/buildah/stable:v1.15.1'
+          - name: STORAGE_DRIVER
+            value: overlay
+          - name: DOCKERFILE
+            value: ./Dockerfile
+          - name: CONTEXT
+            value: .
+          - name: TLSVERIFY
+            value: 'true'
+          - name: FORMAT
+            value: oci
+        runAfter:
+          - git-clone
+        taskRef:
+          kind: Task
+          name: buildah-trivy-scan
+        workspaces:
+          - name: source
+            workspace: shared-data
+    workspaces:
+      - description: pass betwen tasks
+        name: shared-data
