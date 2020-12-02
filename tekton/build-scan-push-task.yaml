@@ -74,8 +74,6 @@ spec:
           $(params.BUILD_EXTRA_ARGS) --format=$(params.FORMAT) \
           --tls-verify=$(params.TLSVERIFY) --no-cache \
           -f $(params.DOCKERFILE) -t $(params.IMAGE) $(params.CONTEXT) && buildah images && mkdir -p /var/lib/containers/$(params.IMAGE) && buildah push $(params.IMAGE) oci:/var/lib/containers/test && ls -lah /var/lib/containers/test 
-      securityContext:
-        privileged: true
       volumeMounts:
         - mountPath: /var/lib/containers
           name: varlibcontainers
@@ -91,13 +89,9 @@ spec:
       image: aquasec/trivy
       name: image-scan
       resources: {}
-      securityContext:
-        privileged: true
       volumeMounts:
         - mountPath: /root/.cache/
           name: trivy-cache
-        - mountPath: /var/run/docker.sock
-          name: docker-socket
         - mountPath: /var/lib/containers
           name: varlibcontainers
     - image: $(params.BUILDER_IMAGE)
@@ -108,8 +102,6 @@ spec:
           $(params.PUSH_EXTRA_ARGS) --tls-verify=$(params.TLSVERIFY) \
           --digestfile $(workspaces.source.path)/image-digest $(params.IMAGE) \
           docker://$(params.IMAGE)
-      securityContext:
-        privileged: true
       volumeMounts:
         - mountPath: /var/lib/containers
           name: varlibcontainers
@@ -125,9 +117,5 @@ spec:
       name: varlibcontainers
     - emptyDir: {}
       name: trivy-cache
-    - hostPath:
-        path: /var/run/crio/crio.sock
-        type: Socket
-      name: docker-socket
   workspaces:
     - name: source
