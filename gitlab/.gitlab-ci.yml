@@ -1,0 +1,43 @@
+stages:
+  - build
+  - package
+
+build:
+  stage: build
+  image: openjdk:8-jdk-buster
+  script:
+    - ./gradlew assemble
+  artifacts:
+    name: "gs-spring-boot-docker_$CI_COMMIT_SHORT_SHA.jar"
+    paths:
+      - build/libs/gs-spring-boot-docker-0.1.0.jar
+    expire_in: 1 day
+  cache:
+    key: gradle-cache
+    paths:
+      - .gradle/caches
+  variables:
+    GRADLE_USER_HOME: .gradle
+
+ 
+package:
+  tags:
+    - image_builder
+  variables:
+    GIT_STRATEGY: clone
+  stage: package
+  before_script:
+  - export TRIVY_VERSION=$(wget -qO - "https://api.github.com/repos/aquasecurity/trivy/releases/latest" | grep '"tag_name":' | sed -E 's/.*"v([^"]+)".*/\1/')
+  - echo $TRIVY_VERSION
+  - wget --no-verbose https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz -O - | tar  -zxvf -
+  script:
+    - mkdir -p reports
+    - docker build . --build-arg JAR_FILE="build/libs/gs-spring-boot-docker-0.1.0.jar" -t schlapzz/spring-boot:$CI_COMMIT_SHORT_SHA
+    - ./trivy --exit-code=0 -o reports/container-scanning-report_$CI_COMMIT_SHORT_SHA.json schlapzz/spring-boot:$CI_COMMIT_SHORT_SHA
+    - docker push schlapzz/spring-boot:$CI_COMMIT_SHORT_SHA
+  artifacts:
+    when: always
+    name: "container-scanning-report_$CI_COMMIT_SHORT_SHA.json"
+    paths:
+      - reports/container-scanning-report_$CI_COMMIT_SHORT_SHA.json
+    expire_in: 1 day
